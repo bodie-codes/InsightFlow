@@ -4,79 +4,119 @@ import OpenAI from 'openai';
 import { PrismaClient } from '@prisma/client';
 import Papa from 'papaparse';
 
-// Přesměrování OpenAI klienta na bezplatné servery Groq
+// OpenAI client routed to Groq servers
 const openai = new OpenAI({ 
   apiKey: process.env.GROQ_API_KEY,
   baseURL: "https://api.groq.com/openai/v1"
 });
+
 const prisma = new PrismaClient();
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File;
-    // Z frontendu sem teď posíláme e-mail přihlášeného uživatele
     const email = formData.get('userId') as string; 
 
     if (!file || !email) {
-      return NextResponse.json({ error: 'Chybí data' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing required file or user ID.' }, { status: 400 });
     }
 
-    // Přečtení obsahu souboru a jeho parsování
+    // Parse CSV file content
     const fileText = await file.text();
     const parsed = Papa.parse(fileText, { header: true, skipEmptyLines: true });
-    const reviews = parsed.data.slice(0, 50).map((row: any) => row.review || row.text).join('\n---\n');
 
-    // Prompt pro AI
+    if (!parsed.data || parsed.data.length === 0) {
+      return NextResponse.json({ error: 'CSV file is empty or invalid.' }, { status: 400 });
+    }
+
+    // Robust extraction of review text from various possible column names
+    const reviews = parsed.data
+      .slice(0, 50)
+      .map((row: any) => {
+        return (
+          row.Review ||
+          row.review ||
+          row.text ||
+          row.Text ||
+          row.comment ||
+          row.Comment ||
+          row.feedback ||
+          row.Feedback ||
+          Object.values(row).join(' ')
+        );
+      })
+      .filter(Boolean)
+      .join('\n---\n');
+
+    // Prompt enforcing professional English output and strict JSON structure
     const prompt = `
-      Analyzuj následující zákaznické recenze. Vrať striktně JSON s následující strukturou:
+      Analyze the following customer reviews. Return ONLY a valid JSON object in English with this exact structure:
       {
-        "sentiment": { "positive": (číslo 0-100), "neutral": (číslo 0-100), "negative": (číslo 0-100) },
-        "topComplaints": ["stížnost 1", "stížnost 2", "stížnost 3"],
-        "actionItems": ["návrh 1", "návrh 2", "návrh 3"]
+        "sentiment": { 
+          "positive": (integer 0-100), 
+          "neutral": (integer 0-100), 
+          "negative": (integer 0-100) 
+        },
+        "topComplaints": ["concise issue 1", "concise issue 2", "concise issue 3"],
+        "actionItems": ["actionable recommendation 1", "actionable recommendation 2", "actionable recommendation 3"]
       }
-      
-      Recenze:
+
+      Ensure the percentages sum up to 100.
+      All text values MUST be written in clear, professional English.
+
+      Customer Reviews:
       ${reviews}
     `;
 
-    // Volání Groq API se správným modelem
+    // Call Groq API with temperature 0 for deterministic output
     const completion = await openai.chat.completions.create({
       model: 'openai/gpt-oss-120b',
       messages: [{ role: 'user', content: prompt }],
-      response_format: { type: "json_object" }
+      response_format: { type: "json_object" },
+      temperature: 0
     });
 
     const aiResult = JSON.parse(completion.choices[0].message.content || '{}');
 
-    // 1. Najdeme tvůj skutečný uživatelský profil podle e-mailu z GitHubu
+    // Safe fallback values if any field is missing
+    const positivePct = aiResult.sentiment?.positive ?? 0;
+    const neutralPct = aiResult.sentiment?.neutral ?? 0;
+    const negativePct = aiResult.sentiment?.negative ?? 0;
+    const topComplaints = aiResult.topComplaints && aiResult.topComplaints.length > 0 
+      ? aiResult.topComplaints 
+      : ['No critical issues detected'];
+    const actionItems = aiResult.actionItems && aiResult.actionItems.length > 0 
+      ? aiResult.actionItems 
+      : ['Maintain current service quality'];
+
+    // Find actual user profile in PostgreSQL database
     const user = await prisma.user.findUnique({
       where: { email: email }
     });
 
     if (!user) {
-      return NextResponse.json({ error: 'Uživatel nenalezen v databázi.' }, { status: 404 });
+      return NextResponse.json({ error: 'User profile not found in database.' }, { status: 404 });
     }
 
-    // 2. Uložení výsledků analýzy přímo pod tvé skutečné ID
+    // Save analysis results
     const savedAnalysis = await prisma.analysis.create({
       data: {
-        userId: user.id, // Přiřazujeme k reálnému uživateli
+        userId: user.id,
         filename: file.name,
         totalReviews: parsed.data.length,
-        positivePct: aiResult.sentiment.positive,
-        neutralPct: aiResult.sentiment.neutral,
-        negativePct: aiResult.sentiment.negative,
-        topComplaints: aiResult.topComplaints,
-        actionItems: aiResult.actionItems,
+        positivePct,
+        neutralPct,
+        negativePct,
+        topComplaints,
+        actionItems,
       }
     });
 
-    // Odeslání dat zpět na frontend
     return NextResponse.json({ success: true, data: savedAnalysis });
 
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: 'Něco se pokazilo' }, { status: 500 });
+    console.error('API /api/analyze error:', error);
+    return NextResponse.json({ error: 'Failed to process analysis.' }, { status: 500 });
   }
 }

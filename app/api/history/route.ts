@@ -1,35 +1,32 @@
-import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUserId } from "@/lib/auth";
 
-const prisma = new PrismaClient();
+export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+// Returns the analysis history of the signed-in user only
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const email = searchParams.get('userId'); 
+    const userId = await getCurrentUserId();
 
-    if (!email) {
-      return NextResponse.json({ success: false, error: 'Chybí e-mail uživatele.' });
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "Please sign in to see your history." },
+        { status: 401 }
+      );
     }
 
-    // 1. Najdeme skutečné ID uživatele podle e-mailu z GitHubu
-    const user = await prisma.user.findUnique({ 
-      where: { email } 
-    });
-
-    if (!user) {
-      return NextResponse.json({ success: true, data: [] });
-    }
-
-    // 2. Vytáhneme historii přiřazenou k tomuto ID
     const history = await prisma.analysis.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
+      where: { userId },
+      orderBy: { createdAt: "desc" },
     });
 
     return NextResponse.json({ success: true, data: history });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ success: false, error: 'Chyba při načítání historie.' });
+    console.error("API /api/history error:", error);
+    return NextResponse.json(
+      { success: false, error: "Failed to load history." },
+      { status: 500 }
+    );
   }
 }

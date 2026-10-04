@@ -18,42 +18,39 @@ function Dashboard() {
   const [result, setResult] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
 
+  // The server knows who is signed in, so we don't send any user id
   const fetchHistory = async () => {
-    if (!session?.user?.email) return; 
     try {
-      const res = await fetch('/api/history?userId=' + session.user.email);
+      const res = await fetch('/api/history', { cache: 'no-store' });
       const data = await res.json();
       if (data.success) {
         setHistory(data.data);
       }
     } catch (err) {
-      console.error("Error fetching analysis history.");
+      console.error('Error fetching analysis history.');
     }
   };
 
   useEffect(() => {
     if (status === 'authenticated') fetchHistory();
-  }, [status, session]);
+  }, [status]);
 
   const processUpload = async (fileToUpload: File) => {
-    if (!session?.user?.email) return;
-
     setLoading(true);
     const formData = new FormData();
     formData.append('file', fileToUpload);
-    formData.append('userId', session.user.email); 
 
     try {
       const res = await fetch('/api/analyze', { method: 'POST', body: formData });
       const data = await res.json();
-      if (data.success && data.data) {
+      if (res.ok && data.success && data.data) {
         setResult(data.data);
         fetchHistory();
       } else {
-        alert(data.error || "Failed to analyze the dataset.");
+        alert(data.error || 'Failed to analyze the dataset.');
       }
     } catch (err) {
-      alert("Error uploading file.");
+      alert('Error uploading file.');
     } finally {
       setLoading(false);
     }
@@ -78,13 +75,13 @@ function Dashboard() {
 
     const blob = new Blob([sampleCsvContent], { type: 'text/csv;charset=utf-8;' });
     const sampleFile = new File([blob], 'sample-ecommerce-reviews.csv', { type: 'text/csv' });
-    
+
     setFile(sampleFile);
     await processUpload(sampleFile);
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); 
+    e.stopPropagation();
 
     if (!confirm('Are you sure you want to delete this analysis?')) return;
 
@@ -122,7 +119,7 @@ function Dashboard() {
             <span className="font-light text-slate-500">Flow</span>
           </h1>
           <p className="text-slate-500 mb-10 text-sm">AI-powered customer review analytics platform.</p>
-          <button 
+          <button
             onClick={() => signIn('github')}
             className="w-full bg-slate-900 text-white px-6 py-3.5 rounded-xl font-medium hover:bg-slate-800 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-3 cursor-pointer"
           >
@@ -146,7 +143,7 @@ function Dashboard() {
             <span className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
               {session?.user?.name || session?.user?.email}
             </span>
-            <button 
+            <button
               onClick={() => signOut()}
               className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-medium cursor-pointer"
             >
@@ -157,19 +154,19 @@ function Dashboard() {
       </nav>
 
       <div className="max-w-6xl mx-auto px-6 py-10 space-y-10">
-        
+
         {/* Upload Zone */}
         <section>
           <div className="mb-4">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">New Analysis</h2>
             <p className="text-slate-500 text-sm mt-1">Upload a customer review CSV export or run instant sample data.</p>
           </div>
-          
+
           <form onSubmit={handleUpload} className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100 space-y-4">
             <div className="flex flex-col md:flex-row gap-6 items-center">
               <div className="flex-1 w-full relative">
-                <input 
-                  type="file" 
+                <input
+                  type="file"
                   accept=".csv"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -182,8 +179,8 @@ function Dashboard() {
                 </div>
               </div>
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 disabled={!file || loading}
                 className="w-full md:w-auto md:min-w-[200px] bg-indigo-600 text-white px-8 py-4 rounded-2xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-sm hover:shadow h-full flex items-center justify-center cursor-pointer"
               >
@@ -214,7 +211,7 @@ function Dashboard() {
           <section className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-6">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis Results</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
+
               <div className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center">
@@ -246,7 +243,7 @@ function Dashboard() {
                   ))}
                 </ul>
               </div>
-              
+
               <div className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100 md:col-span-2">
                 <h3 className="text-lg font-semibold text-slate-900 mb-6">Sentiment Breakdown</h3>
                 <div className="h-72 w-full">
@@ -276,9 +273,9 @@ function Dashboard() {
                           ))
                         }
                       </Pie>
-                      <Tooltip 
+                      <Tooltip
                         contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                        formatter={(value) => `${value} %`} 
+                        formatter={(value) => `${value} %`}
                       />
                       <Legend iconType="circle" />
                     </PieChart>
@@ -298,7 +295,7 @@ function Dashboard() {
                 {history.length} {history.length === 1 ? 'record' : 'records'}
               </span>
             </div>
-            
+
             <div className="bg-white rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm text-slate-600">
@@ -314,11 +311,11 @@ function Dashboard() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {history.map((item) => (
-                      <tr 
-                        key={item.id} 
+                      <tr
+                        key={item.id}
                         onClick={() => {
                           setResult(item);
-                          window.scrollTo({ top: 0, behavior: 'smooth' }); 
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
                         className="group cursor-pointer hover:bg-slate-50/80 transition-all duration-300"
                       >

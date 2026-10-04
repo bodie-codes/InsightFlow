@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# InsightFlow
 
-## Getting Started
+**Turn customer reviews into decisions.**
 
-First, run the development server:
+[Live demo](https://insight-flow-tawny-alpha.vercel.app)
+
+<!-- Screenshot: nahraj ho do složky docs/ a odkomentuj další řádek
+![InsightFlow](docs/insightflow.png)
+-->
+
+An AI-powered B2B SaaS platform for analyzing customer feedback. Upload a CSV of customer reviews and InsightFlow uses AI to measure sentiment, surface the biggest pain points and recommend what to fix first, in seconds.
+
+## How it works
+
+1. **Upload your reviews.** Export reviews from any platform as a CSV file. InsightFlow finds the review and rating columns automatically.
+2. **AI reads every review.** A large language model classifies up to 50 reviews one by one, so every number is backed by real data.
+3. **Know what to fix first.** You get the most critical pain points with real customer quotes and concrete actions your team can take today.
+
+## Try it
+
+Open the [live demo](https://insight-flow-tawny-alpha.vercel.app) and click **Try live demo**. No sign-up is needed for the demo. You can also sign in with GitHub.
+
+## Tech stack
+
+- **Next.js** and **TypeScript**
+- **Prisma** with **PostgreSQL**
+- A large language model for review analysis
+- Sign in with GitHub
+- Hosted on **Vercel**
+
+## Run locally
 
 ```bash
+git clone https://github.com/bodie-codes/InsightFlow.git
+cd InsightFlow
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open <http://localhost:3000>. The app needs a PostgreSQL database (`DATABASE_URL`) and the keys for its AI model and GitHub sign-in, set in your local `.env` file.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+<!-- Sem doplň zbylé názvy proměnných z .env, nikdy ne jejich hodnoty -->
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Author
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details..
+Built by **Bodie** · [bodiecodes.com](https://www.bodiecodes.com) · [LinkedIn](https://www.linkedin.com/in/bodiecodes)

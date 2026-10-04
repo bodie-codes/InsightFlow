@@ -23,9 +23,9 @@ Open the [live demo](https://insight-flow-tawny-alpha.vercel.app) and click **Tr
 ## Tech stack
 
 - **Next.js** and **TypeScript**
+- **Groq API** for the large language model that analyzes the reviews
+- **NextAuth.js** with GitHub sign-in
 - **Prisma** with **PostgreSQL**
-- A large language model for review analysis
-- Sign in with GitHub
 - Hosted on **Vercel**
 
 ## Run locally
@@ -34,12 +34,33 @@ Open the [live demo](https://insight-flow-tawny-alpha.vercel.app) and click **Tr
 git clone https://github.com/bodie-codes/InsightFlow.git
 cd InsightFlow
 npm install
+```
+
+Create a `.env` file in the project root with your own values:
+
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/insightflow
+GROQ_API_KEY=your-groq-api-key
+GITHUB_ID=your-github-oauth-app-client-id
+GITHUB_SECRET=your-github-oauth-app-client-secret
+NEXTAUTH_SECRET=choose-a-long-random-string
+```
+
+| Variable | What it is |
+|---|---|
+| `DATABASE_URL` | Connection string of an empty PostgreSQL database |
+| `GROQ_API_KEY` | Groq API key (free accounts at [console.groq.com](https://console.groq.com)) |
+| `GITHUB_ID`, `GITHUB_SECRET` | Credentials of a GitHub OAuth app, created at [github.com/settings/developers](https://github.com/settings/developers) with the callback URL `http://localhost:3000/api/auth/callback/github` |
+| `NEXTAUTH_SECRET` | Any long random string used to secure sessions |
+
+Create the database tables from the Prisma schema and start the app:
+
+```bash
+npx prisma db push
 npm run dev
 ```
 
-Then open <http://localhost:3000>. The app needs a PostgreSQL database (`DATABASE_URL`) and the keys for its AI model and GitHub sign-in, set in your local `.env` file.
-
-<!-- Sem doplň zbylé názvy proměnných z .env, nikdy ne jejich hodnoty -->
+Then open <http://localhost:3000>.
 
 ## Author
 

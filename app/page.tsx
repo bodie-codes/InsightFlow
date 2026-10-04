@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { SessionProvider, signIn, signOut, useSession } from 'next-auth/react';
+import type { AnalysisResult, ReviewResult, Sentiment } from '@/lib/types';
 
 export default function Page() {
   return (
@@ -10,6 +11,18 @@ export default function Page() {
     </SessionProvider>
   );
 }
+
+/* ---------- Constants ---------- */
+
+const SENTIMENT_ORDER: Sentiment[] = ['positive', 'neutral', 'negative'];
+
+const SENTIMENT_STYLES: Record<Sentiment, { label: string; color: string; pill: string }> = {
+  positive: { label: 'Positive', color: '#10b981', pill: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+  neutral: { label: 'Neutral', color: '#94a3b8', pill: 'text-slate-600 bg-slate-100 border-slate-200' },
+  negative: { label: 'Negative', color: '#f43f5e', pill: 'text-rose-700 bg-rose-50 border-rose-100' },
+};
+
+const CARD = 'bg-white rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100';
 
 /* ---------- Decides which screen to show ---------- */
 
@@ -67,6 +80,16 @@ function GitHubIcon() {
   );
 }
 
+function Stars({ rating }: { rating: number }) {
+  const filled = Math.max(0, Math.min(5, Math.round(rating)));
+  return (
+    <span className="text-xs tracking-wider" aria-label={`${rating} out of 5 stars`}>
+      <span className="text-amber-400">{'★'.repeat(filled)}</span>
+      <span className="text-slate-200">{'★'.repeat(5 - filled)}</span>
+    </span>
+  );
+}
+
 /* ---------- Landing page (signed-out visitors) ---------- */
 
 function Landing({ onTryDemo }: { onTryDemo: () => void }) {
@@ -74,17 +97,17 @@ function Landing({ onTryDemo }: { onTryDemo: () => void }) {
     {
       number: '01',
       title: 'Upload your reviews',
-      text: 'Export reviews from any platform as a CSV file. InsightFlow finds the review column automatically.',
+      text: 'Export reviews from any platform as a CSV file. InsightFlow finds the review and rating columns automatically.',
     },
     {
       number: '02',
       title: 'AI reads every review',
-      text: 'A large language model analyzes up to 50 reviews and measures how your customers really feel.',
+      text: 'A large language model classifies up to 50 reviews one by one, so every number is backed by real data.',
     },
     {
       number: '03',
       title: 'Know what to fix first',
-      text: 'Get the most critical pain points and concrete recommended actions your team can act on today.',
+      text: 'Get the most critical pain points with real customer quotes and concrete actions your team can take today.',
     },
   ];
 
@@ -147,10 +170,7 @@ function Landing({ onTryDemo }: { onTryDemo: () => void }) {
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {steps.map((step) => (
-            <div
-              key={step.number}
-              className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100"
-            >
+            <div key={step.number} className={`${CARD} p-8`}>
               <span className="text-sm font-bold text-indigo-600">{step.number}</span>
               <h3 className="mt-3 text-lg font-semibold text-slate-900">{step.title}</h3>
               <p className="mt-2 text-sm text-slate-500 leading-relaxed">{step.text}</p>
@@ -178,8 +198,8 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
   const { data: session, status } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [history, setHistory] = useState<any[]>([]);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [history, setHistory] = useState<AnalysisResult[]>([]);
 
   // The server knows who is signed in, so we don't send any user id
   const fetchHistory = async () => {
@@ -226,22 +246,17 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
     await processUpload(file);
   };
 
+  // Loads the realistic sample file from /public/sample-reviews.csv
   const handleSampleUpload = async () => {
-    const sampleCsvContent = `id,Review,Rating
-1,"The product arrived extremely fast, packaging was solid, and performance exceeded my expectations!",5
-2,"Shipping took over two weeks, the package was dented, and customer support did not respond for days.",1
-3,"Great build quality for the price. Very satisfied with overall durability.",5
-4,"Software setup was confusing and crashed twice during installation. Needs better documentation.",2
-5,"Clean interface and intuitive layout. Highly recommended for modern engineering teams.",5
-6,"Average experience. Does what it advertises, but battery life could be improved.",3
-7,"The item stopped working after two days of light usage. Requesting a full refund.",1
-8,"Superb customer service! They resolved my account issue within ten minutes.",5`;
-
-    const blob = new Blob([sampleCsvContent], { type: 'text/csv;charset=utf-8;' });
-    const sampleFile = new File([blob], 'sample-ecommerce-reviews.csv', { type: 'text/csv' });
-
-    setFile(sampleFile);
-    await processUpload(sampleFile);
+    try {
+      const res = await fetch('/sample-reviews.csv');
+      const csvText = await res.text();
+      const sampleFile = new File([csvText], 'sample-coffee-maker-reviews.csv', { type: 'text/csv' });
+      setFile(sampleFile);
+      await processUpload(sampleFile);
+    } catch (err) {
+      alert('Could not load the sample data.');
+    }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
@@ -340,7 +355,7 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
             <p className="text-slate-500 text-sm mt-1">Upload a customer review CSV export or run instant sample data.</p>
           </div>
 
-          <form onSubmit={handleUpload} className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100 space-y-4">
+          <form onSubmit={handleUpload} className={`${CARD} p-8 space-y-4`}>
             <div className="flex flex-col md:flex-row gap-6 items-center">
               <div className="flex-1 w-full relative">
                 <input
@@ -353,7 +368,7 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
                   <p className="text-sm font-medium text-slate-700">
                     {file ? `Selected: ${file.name}` : 'Click or drag & drop a CSV file'}
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">Maximum file size 5MB</p>
+                  <p className="text-xs text-slate-400 mt-1">Maximum file size 5MB · up to 50 reviews analyzed</p>
                 </div>
               </div>
 
@@ -385,88 +400,11 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
         </section>
 
         {/* Results Section */}
-        {result && (
-          <section className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-6">
-            <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis Results</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-              <div className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center">
-                    <span className="text-rose-600 font-bold text-sm">!</span>
-                  </div>
-                  <h3 className="text-lg font-semibold text-slate-900">Critical Pain Points</h3>
-                </div>
-                <ul className="space-y-3">
-                  {result.topComplaints?.map((c: string, i: number) => (
-                    <li key={i} className="flex gap-3 text-slate-700 text-sm leading-relaxed">
-                      <span className="text-rose-500 mt-0.5">•</span> {c}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                    <span className="text-emerald-600 font-bold text-sm">✓</span>
-                  </div>
-                  <h3 className="text-lg font-semibold text-slate-900">Recommended Actions</h3>
-                </div>
-                <ul className="space-y-3">
-                  {result.actionItems?.map((a: string, i: number) => (
-                    <li key={i} className="flex gap-3 text-slate-700 text-sm leading-relaxed">
-                      <span className="text-emerald-500 mt-0.5">•</span> {a}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100 md:col-span-2">
-                <h3 className="text-lg font-semibold text-slate-900 mb-6">Sentiment Breakdown</h3>
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={[
-                          { name: 'Positive', value: result.positivePct || 0, color: '#10b981' },
-                          { name: 'Neutral', value: result.neutralPct || 0, color: '#94a3b8' },
-                          { name: 'Negative', value: result.negativePct || 0, color: '#f43f5e' }
-                        ]}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={80}
-                        outerRadius={100}
-                        paddingAngle={2}
-                        stroke="none"
-                        dataKey="value"
-                      >
-                        {
-                          [
-                            { color: '#10b981' },
-                            { color: '#94a3b8' },
-                            { color: '#f43f5e' }
-                          ].map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))
-                        }
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                        formatter={(value) => `${value} %`}
-                      />
-                      <Legend iconType="circle" />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+        {result && <Results key={result.id} result={result} />}
 
         {/* History Section (signed-in users only) */}
         {!isDemo && history.length > 0 && (
-          <section className="animate-in fade-in duration-700 space-y-6 pt-4">
+          <section className="space-y-6 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis History</h2>
               <span className="text-sm font-medium text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
@@ -474,13 +412,13 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
               </span>
             </div>
 
-            <div className="bg-white rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100 overflow-hidden">
+            <div className={`${CARD} overflow-hidden`}>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm text-slate-600">
                   <thead className="bg-slate-50/80 border-b border-slate-100 text-slate-500">
                     <tr>
                       <th className="px-6 py-4 font-medium">File</th>
-                      <th className="px-6 py-4 font-medium">Total Reviews</th>
+                      <th className="px-6 py-4 font-medium">Reviews</th>
                       <th className="px-6 py-4 font-medium">Positive</th>
                       <th className="px-6 py-4 font-medium">Negative</th>
                       <th className="px-6 py-4 font-medium">Date</th>
@@ -556,5 +494,272 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
 
       </div>
     </main>
+  );
+}
+
+/* ---------- Analysis results ---------- */
+
+function StatCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+  return (
+    <div className={`${CARD} p-6`}>
+      <p className="text-xs font-semibold tracking-wide text-slate-400 uppercase">{label}</p>
+      <div className="mt-2 text-2xl font-bold text-slate-900 leading-tight">{value}</div>
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
+function Results({ result }: { result: AnalysisResult }) {
+  const reviews = result.reviews ?? [];
+  const hasReviews = reviews.length > 0;
+
+  // Older analyses have no quotes yet, so we fall back to the plain list
+  const painPoints =
+    result.painPoints && result.painPoints.length > 0
+      ? result.painPoints
+      : (result.topComplaints ?? []).map((issue) => ({ issue, quotes: [] as string[] }));
+
+  const percentages: Record<Sentiment, number> = {
+    positive: result.positivePct,
+    neutral: result.neutralPct,
+    negative: result.negativePct,
+  };
+
+  const countOf = (sentiment: Sentiment) => reviews.filter((r) => r.sentiment === sentiment).length;
+
+  const chartData = SENTIMENT_ORDER.map((sentiment) => ({
+    name: SENTIMENT_STYLES[sentiment].label,
+    value: percentages[sentiment],
+    color: SENTIMENT_STYLES[sentiment].color,
+  }));
+
+  return (
+    <section className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-2">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis Results</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            {result.filename} ·{' '}
+            {new Date(result.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </p>
+        </div>
+      </div>
+
+      {/* Key numbers */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Reviews analyzed" value={result.totalReviews} />
+        <StatCard
+          label="Positive sentiment"
+          value={<span className="text-emerald-600">{result.positivePct}%</span>}
+          hint={`${result.negativePct}% negative`}
+        />
+        <StatCard
+          label="Average rating"
+          value={
+            result.avgRating !== null && result.avgRating !== undefined ? (
+              <span className="flex items-baseline gap-2">
+                {result.avgRating.toFixed(1)}
+                <Stars rating={result.avgRating} />
+              </span>
+            ) : (
+              <span className="text-slate-300">—</span>
+            )
+          }
+          hint={result.avgRating ? 'out of 5' : 'No rating column found'}
+        />
+        <StatCard
+          label="Top issue"
+          value={<span className="text-base font-semibold line-clamp-2">{painPoints[0]?.issue ?? 'None detected'}</span>}
+        />
+      </div>
+
+      {/* AI summary */}
+      {result.summary && (
+        <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-6">
+          <p className="text-xs font-semibold tracking-wide text-indigo-600 uppercase">AI summary</p>
+          <p className="mt-2 text-slate-700 leading-relaxed">{result.summary}</p>
+        </div>
+      )}
+
+      {/* Pain points + actions */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className={`${CARD} p-8`}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center">
+              <span className="text-rose-600 font-bold text-sm">!</span>
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900">Critical Pain Points</h3>
+          </div>
+          <ol className="space-y-6">
+            {painPoints.map((point, i) => (
+              <li key={i}>
+                <p className="flex gap-3 text-slate-900 text-sm font-semibold leading-relaxed">
+                  <span className="text-rose-500">{i + 1}.</span> {point.issue}
+                </p>
+                {point.quotes.length > 0 && (
+                  <div className="mt-2 ml-6 space-y-2">
+                    {point.quotes.map((quote, q) => (
+                      <blockquote
+                        key={q}
+                        className="text-xs text-slate-500 italic border-l-2 border-rose-200 pl-3 leading-relaxed"
+                      >
+                        “{quote}”
+                      </blockquote>
+                    ))}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        <div className={`${CARD} p-8`}>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+              <span className="text-emerald-600 font-bold text-sm">✓</span>
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900">Recommended Actions</h3>
+          </div>
+          <ol className="space-y-4">
+            {result.actionItems?.map((action, i) => (
+              <li key={i} className="flex gap-3 text-slate-700 text-sm leading-relaxed">
+                <span className="flex-none w-6 h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center justify-center">
+                  {i + 1}
+                </span>
+                {action}
+              </li>
+            ))}
+          </ol>
+        </div>
+      </div>
+
+      {/* Sentiment + reviews */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className={`${CARD} p-8`}>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">Sentiment Breakdown</h3>
+          <div className="relative h-56 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={chartData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={70}
+                  outerRadius={90}
+                  paddingAngle={2}
+                  stroke="none"
+                  dataKey="value"
+                >
+                  {chartData.map((entry) => (
+                    <Cell key={entry.name} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  formatter={(value) => `${value}%`}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-3xl font-bold text-slate-900">{result.positivePct}%</span>
+              <span className="text-xs text-slate-500">positive</span>
+            </div>
+          </div>
+
+          <ul className="mt-4 space-y-2">
+            {SENTIMENT_ORDER.map((sentiment) => (
+              <li key={sentiment} className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 text-slate-600">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: SENTIMENT_STYLES[sentiment].color }} />
+                  {SENTIMENT_STYLES[sentiment].label}
+                </span>
+                <span className="font-semibold text-slate-900">
+                  {percentages[sentiment]}%
+                  {hasReviews && (
+                    <span className="ml-1 font-normal text-slate-400">({countOf(sentiment)})</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className={`${CARD} p-8 lg:col-span-2`}>
+          {hasReviews ? (
+            <ReviewsList reviews={reviews} />
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-slate-400 text-center">
+              Review-level details are available for analyses created after the latest update.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewsList({ reviews }: { reviews: ReviewResult[] }) {
+  const [filter, setFilter] = useState<'all' | Sentiment>('all');
+  const [showAll, setShowAll] = useState(false);
+
+  const filtered = filter === 'all' ? reviews : reviews.filter((r) => r.sentiment === filter);
+  const visible = showAll ? filtered : filtered.slice(0, 6);
+  const tabs: ('all' | Sentiment)[] = ['all', ...SENTIMENT_ORDER];
+
+  const countFor = (tab: 'all' | Sentiment) =>
+    tab === 'all' ? reviews.length : reviews.filter((r) => r.sentiment === tab).length;
+
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <h3 className="text-lg font-semibold text-slate-900">Reviews</h3>
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => {
+                setFilter(tab);
+                setShowAll(false);
+              }}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-all cursor-pointer ${
+                filter === tab
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              {tab === 'all' ? 'All' : SENTIMENT_STYLES[tab].label} ({countFor(tab)})
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <ul className="divide-y divide-slate-100">
+        {visible.map((review, i) => (
+          <li key={i} className="py-3 flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${SENTIMENT_STYLES[review.sentiment].pill}`}>
+                {SENTIMENT_STYLES[review.sentiment].label}
+              </span>
+              {review.rating !== null && <Stars rating={review.rating} />}
+            </div>
+            <p className="text-sm text-slate-700 leading-relaxed">{review.text}</p>
+          </li>
+        ))}
+      </ul>
+
+      {filtered.length > 6 && (
+        <button
+          onClick={() => setShowAll(!showAll)}
+          className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+        >
+          {showAll ? 'Show less' : `Show all ${filtered.length} reviews`}
+        </button>
+      )}
+
+      {filtered.length === 0 && (
+        <p className="text-sm text-slate-400 py-6 text-center">No reviews in this category.</p>
+      )}
+    </div>
   );
 }

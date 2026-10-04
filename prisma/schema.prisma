@@ -7,7 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- NEXTAUTH MODELY ---
+// --- NEXTAUTH MODELS ---
 
 model Account {
   id                       String  @id @default(cuid())
@@ -45,9 +45,8 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
-  
-  // Naše propojení s analýzami
-  analyses      Analysis[] 
+
+  analyses      Analysis[]
 }
 
 model VerificationToken {
@@ -58,7 +57,7 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// --- NÁŠ MODEL PRO APLIKACI ---
+// --- APP MODELS ---
 
 model Analysis {
   id            String   @id @default(cuid())
@@ -70,6 +69,10 @@ model Analysis {
   negativePct   Float
   topComplaints Json
   actionItems   Json
+  summary       String?
+  avgRating     Float?
+  painPoints    Json?
+  reviews       Json?
   createdAt     DateTime @default(now())
 
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)

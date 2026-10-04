@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { SessionProvider, signIn, signOut, useSession } from 'next-auth/react';
-import type { AnalysisResult, ReviewResult, Sentiment } from '@/lib/types';
+import type { AnalysisResult, ProgressStep, ReviewResult, Sentiment, StreamEvent } from '@/lib/types';
 
 export default function Page() {
   return (
@@ -22,7 +22,27 @@ const SENTIMENT_STYLES: Record<Sentiment, { label: string; color: string; pill: 
   negative: { label: 'Negative', color: '#f43f5e', pill: 'text-rose-700 bg-rose-50 border-rose-100' },
 };
 
+const PROGRESS_STEPS: { key: ProgressStep; label: string }[] = [
+  { key: 'read', label: 'Reading your file' },
+  { key: 'classify', label: 'AI classifies every review' },
+  { key: 'insights', label: 'Finding pain points' },
+  { key: 'save', label: 'Saving results' },
+];
+
 const CARD = 'bg-white rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100';
+
+type StepState = { status: 'pending' | 'working' | 'done'; detail?: string };
+type ProgressState = Record<ProgressStep, StepState>;
+type Toast = { id: number; message: string; tone: 'success' | 'error' };
+
+function initialProgress(): ProgressState {
+  return {
+    read: { status: 'working', detail: 'Uploading…' },
+    classify: { status: 'pending' },
+    insights: { status: 'pending' },
+    save: { status: 'pending' },
+  };
+}
 
 /* ---------- Decides which screen to show ---------- */
 
@@ -87,6 +107,37 @@ function Stars({ rating }: { rating: number }) {
       <span className="text-amber-400">{'★'.repeat(filled)}</span>
       <span className="text-slate-200">{'★'.repeat(5 - filled)}</span>
     </span>
+  );
+}
+
+function Toasts({ toasts, onClose }: { toasts: Toast[]; onClose: (id: number) => void }) {
+  return (
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm print:hidden" aria-live="polite">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={`flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-lg bg-white text-sm ${
+            toast.tone === 'success' ? 'border-emerald-100' : 'border-rose-100'
+          }`}
+        >
+          <span
+            className={`mt-0.5 flex-none w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+              toast.tone === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+            }`}
+          >
+            {toast.tone === 'success' ? '✓' : '!'}
+          </span>
+          <p className="flex-1 text-slate-700 leading-relaxed">{toast.message}</p>
+          <button
+            onClick={() => onClose(toast.id)}
+            className="text-slate-400 hover:text-slate-700 cursor-pointer"
+            aria-label="Close notification"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -198,8 +249,18 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
   const { data: session, status } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<ProgressState | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<AnalysisResult[]>([]);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const closeToast = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
+
+  const showToast = (message: string, tone: Toast['tone'] = 'error') => {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, message, tone }]);
+    setTimeout(() => closeToast(id), 5000);
+  };
 
   // The server knows who is signed in, so we don't send any user id
   const fetchHistory = async () => {
@@ -219,24 +280,61 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
     if (!isDemo && status === 'authenticated') fetchHistory();
   }, [status, isDemo]);
 
+  // Reacts to one live message from the server
+  const handleEvent = (event: StreamEvent) => {
+    if (event.type === 'progress') {
+      setProgress((prev) =>
+        prev ? { ...prev, [event.step]: { status: event.status, detail: event.detail } } : prev
+      );
+    } else if (event.type === 'result') {
+      setResult(event.data);
+      fetchHistory();
+      showToast('Analysis complete.', 'success');
+      setTimeout(() => {
+        document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+    } else if (event.type === 'error') {
+      showToast(event.error, 'error');
+    }
+  };
+
   const processUpload = async (fileToUpload: File) => {
     setLoading(true);
+    setProgress(initialProgress());
+
     const formData = new FormData();
     formData.append('file', fileToUpload);
 
     try {
       const res = await fetch('/api/analyze', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (res.ok && data.success && data.data) {
-        setResult(data.data);
-        fetchHistory();
-      } else {
-        alert(data.error || 'Failed to analyze the dataset.');
+
+      // Problems found before the analysis started come back as normal JSON
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => null);
+        showToast(data?.error || 'Failed to analyze the dataset.', 'error');
+        return;
+      }
+
+      // Read the live progress, one JSON message per line
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.trim()) handleEvent(JSON.parse(line) as StreamEvent);
+        }
       }
     } catch (err) {
-      alert('Error uploading file.');
+      showToast('Could not reach the server. Please check your connection and try again.', 'error');
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -255,7 +353,7 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
       setFile(sampleFile);
       await processUpload(sampleFile);
     } catch (err) {
-      alert('Could not load the sample data.');
+      showToast('Could not load the sample data.', 'error');
     }
   };
 
@@ -265,30 +363,25 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
     if (!confirm('Are you sure you want to delete this analysis?')) return;
 
     try {
-      const res = await fetch(`/api/history/${id}`, {
-        method: 'DELETE',
-      });
-
+      const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
       const data = await res.json();
 
       if (res.ok && data.success) {
         setHistory((prev) => prev.filter((item) => item.id !== id));
-        if (result?.id === id) {
-          setResult(null);
-        }
+        if (result?.id === id) setResult(null);
+        showToast('Analysis deleted.', 'success');
       } else {
-        alert(data.error || 'Failed to delete entry.');
+        showToast(data.error || 'Failed to delete the analysis.', 'error');
       }
     } catch (err) {
-      console.error('Delete error:', err);
-      alert('Error communicating with server.');
+      showToast('Error communicating with the server.', 'error');
     }
   };
 
   return (
-    <main className="min-h-screen bg-[#FAFAFA] font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-900 pb-20">
+    <main className="min-h-screen bg-[#FAFAFA] font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-900 pb-20 [print-color-adjust:exact] [-webkit-print-color-adjust:exact] print:bg-white">
       {/* Top Navigation */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-10">
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-10 print:hidden">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <h1>
             <Logo />
@@ -331,7 +424,7 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
 
       {/* Demo banner */}
       {isDemo && (
-        <div className="bg-indigo-50 border-b border-indigo-100">
+        <div className="bg-indigo-50 border-b border-indigo-100 print:hidden">
           <div className="max-w-6xl mx-auto px-6 py-3 text-sm text-indigo-900">
             You're exploring a live demo. Run the sample data or upload your own CSV.
             Demo results aren't kept in a history.{' '}
@@ -346,10 +439,16 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
         </div>
       )}
 
-      <div className="max-w-6xl mx-auto px-6 py-10 space-y-10">
+      <div className="max-w-6xl mx-auto px-6 py-10 space-y-10 print:py-0">
+
+        {/* Header shown only on the PDF report */}
+        <div className="hidden print:block">
+          <Logo size="text-2xl" />
+          <p className="text-sm text-slate-500 mt-1">Customer review analysis report</p>
+        </div>
 
         {/* Upload Zone */}
-        <section>
+        <section className="print:hidden">
           <div className="mb-4">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">New Analysis</h2>
             <p className="text-slate-500 text-sm mt-1">Upload a customer review CSV export or run instant sample data.</p>
@@ -361,8 +460,9 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
                 <input
                   type="file"
                   accept=".csv"
+                  disabled={loading}
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-default"
                 />
                 <div className={`w-full border-2 border-dashed rounded-2xl p-6 text-center transition-all ${file ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
                   <p className="text-sm font-medium text-slate-700">
@@ -377,25 +477,29 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
                 disabled={!file || loading}
                 className="w-full md:w-auto md:min-w-[200px] bg-indigo-600 text-white px-8 py-4 rounded-2xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-sm hover:shadow h-full flex items-center justify-center cursor-pointer"
               >
-                {loading ? 'Analyzing reviews...' : 'Run AI Analysis'}
+                {loading ? 'Analyzing…' : 'Run AI Analysis'}
               </button>
             </div>
 
-            {/* 1-Click Sample Demo */}
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100/80">
-              <span className="text-xs text-slate-400 font-medium">Don't have a CSV file ready?</span>
-              <button
-                type="button"
-                onClick={handleSampleUpload}
-                disabled={loading}
-                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100/80 px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer group"
-              >
-                <span>Load sample data</span>
-                <svg className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-            </div>
+            {/* Live progress while the analysis runs */}
+            {loading && progress ? (
+              <ProgressPanel progress={progress} />
+            ) : (
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100/80">
+                <span className="text-xs text-slate-400 font-medium">Don't have a CSV file ready?</span>
+                <button
+                  type="button"
+                  onClick={handleSampleUpload}
+                  disabled={loading}
+                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100/80 px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer group"
+                >
+                  <span>Load sample data</span>
+                  <svg className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            )}
           </form>
         </section>
 
@@ -404,7 +508,7 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
 
         {/* History Section (signed-in users only) */}
         {!isDemo && history.length > 0 && (
-          <section className="space-y-6 pt-4">
+          <section className="space-y-6 pt-4 print:hidden">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis History</h2>
               <span className="text-sm font-medium text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
@@ -431,7 +535,9 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
                         key={item.id}
                         onClick={() => {
                           setResult(item);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                          setTimeout(() => {
+                            document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }, 100);
                         }}
                         className="group cursor-pointer hover:bg-slate-50/80 transition-all duration-300"
                       >
@@ -493,7 +599,40 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
         )}
 
       </div>
+
+      <Toasts toasts={toasts} onClose={closeToast} />
     </main>
+  );
+}
+
+/* ---------- Live progress ---------- */
+
+function ProgressPanel({ progress }: { progress: ProgressState }) {
+  return (
+    <ul className="pt-4 border-t border-slate-100/80 grid grid-cols-1 md:grid-cols-4 gap-4" aria-live="polite">
+      {PROGRESS_STEPS.map((step) => {
+        const state = progress[step.key];
+        return (
+          <li key={step.key} className="flex items-start gap-3">
+            <span
+              className={`mt-1.5 flex-none w-2.5 h-2.5 rounded-full transition-colors ${
+                state.status === 'done'
+                  ? 'bg-indigo-600'
+                  : state.status === 'working'
+                  ? 'bg-indigo-400 animate-pulse'
+                  : 'bg-slate-200'
+              }`}
+            />
+            <div>
+              <p className={`text-sm font-medium ${state.status === 'pending' ? 'text-slate-400' : 'text-slate-900'}`}>
+                {step.label}
+              </p>
+              {state.detail && <p className="text-xs text-slate-400 mt-0.5">{state.detail}</p>}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -501,12 +640,33 @@ function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () =>
 
 function StatCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   return (
-    <div className={`${CARD} p-6`}>
+    <div className={`${CARD} p-6 break-inside-avoid`}>
       <p className="text-xs font-semibold tracking-wide text-slate-400 uppercase">{label}</p>
       <div className="mt-2 text-2xl font-bold text-slate-900 leading-tight">{value}</div>
       {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
     </div>
   );
+}
+
+// Downloads every review with its AI sentiment as a CSV file
+function exportReviewsCsv(result: AnalysisResult) {
+  const reviews = result.reviews ?? [];
+  const escape = (value: string | number | null) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+  const rows = [
+    ['id', 'sentiment', 'rating', 'review'].join(','),
+    ...reviews.map((review, index) =>
+      [index + 1, review.sentiment, review.rating, review.text].map(escape).join(',')
+    ),
+  ];
+
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `insightflow-${result.filename.replace(/\.csv$/i, '')}-results.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function Results({ result }: { result: AnalysisResult }) {
@@ -534,15 +694,32 @@ function Results({ result }: { result: AnalysisResult }) {
   }));
 
   return (
-    <section className="space-y-6">
+    <section id="results" className="space-y-6 scroll-mt-24">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-2">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis Results</h2>
           <p className="text-sm text-slate-500 mt-1">
             {result.filename} ·{' '}
             {new Date(result.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
           </p>
+        </div>
+
+        <div className="flex gap-2 print:hidden">
+          <button
+            onClick={() => window.print()}
+            className="text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 px-4 py-2 rounded-xl transition-all cursor-pointer"
+          >
+            Download PDF
+          </button>
+          <button
+            onClick={() => exportReviewsCsv(result)}
+            disabled={!hasReviews}
+            title={hasReviews ? 'Download every review with its AI sentiment' : 'Available for new analyses only'}
+            className="text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 px-4 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Export CSV
+          </button>
         </div>
       </div>
 
@@ -576,7 +753,7 @@ function Results({ result }: { result: AnalysisResult }) {
 
       {/* AI summary */}
       {result.summary && (
-        <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-6">
+        <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-6 break-inside-avoid">
           <p className="text-xs font-semibold tracking-wide text-indigo-600 uppercase">AI summary</p>
           <p className="mt-2 text-slate-700 leading-relaxed">{result.summary}</p>
         </div>
@@ -584,7 +761,7 @@ function Results({ result }: { result: AnalysisResult }) {
 
       {/* Pain points + actions */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className={`${CARD} p-8`}>
+        <div className={`${CARD} p-8 break-inside-avoid`}>
           <div className="flex items-center gap-3 mb-6">
             <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center">
               <span className="text-rose-600 font-bold text-sm">!</span>
@@ -614,7 +791,7 @@ function Results({ result }: { result: AnalysisResult }) {
           </ol>
         </div>
 
-        <div className={`${CARD} p-8`}>
+        <div className={`${CARD} p-8 break-inside-avoid`}>
           <div className="flex items-center gap-3 mb-6">
             <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
               <span className="text-emerald-600 font-bold text-sm">✓</span>
@@ -636,7 +813,7 @@ function Results({ result }: { result: AnalysisResult }) {
 
       {/* Sentiment + reviews */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className={`${CARD} p-8`}>
+        <div className={`${CARD} p-8 break-inside-avoid`}>
           <h3 className="text-lg font-semibold text-slate-900 mb-2">Sentiment Breakdown</h3>
           <div className="relative h-56 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -650,6 +827,7 @@ function Results({ result }: { result: AnalysisResult }) {
                   paddingAngle={2}
                   stroke="none"
                   dataKey="value"
+                  isAnimationActive={false}
                 >
                   {chartData.map((entry) => (
                     <Cell key={entry.name} fill={entry.color} />
@@ -714,7 +892,7 @@ function ReviewsList({ reviews }: { reviews: ReviewResult[] }) {
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <h3 className="text-lg font-semibold text-slate-900">Reviews</h3>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 print:hidden">
           {tabs.map((tab) => (
             <button
               key={tab}
@@ -736,7 +914,7 @@ function ReviewsList({ reviews }: { reviews: ReviewResult[] }) {
 
       <ul className="divide-y divide-slate-100">
         {visible.map((review, i) => (
-          <li key={i} className="py-3 flex flex-col gap-1.5">
+          <li key={i} className="py-3 flex flex-col gap-1.5 break-inside-avoid">
             <div className="flex items-center gap-2">
               <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${SENTIMENT_STYLES[review.sentiment].pill}`}>
                 {SENTIMENT_STYLES[review.sentiment].label}
@@ -751,7 +929,7 @@ function ReviewsList({ reviews }: { reviews: ReviewResult[] }) {
       {filtered.length > 6 && (
         <button
           onClick={() => setShowAll(!showAll)}
-          className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+          className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer print:hidden"
         >
           {showAll ? 'Show less' : `Show all ${filtered.length} reviews`}
         </button>

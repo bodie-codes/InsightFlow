@@ -6,12 +6,175 @@ import { SessionProvider, signIn, signOut, useSession } from 'next-auth/react';
 export default function Page() {
   return (
     <SessionProvider>
-      <Dashboard />
+      <App />
     </SessionProvider>
   );
 }
 
-function Dashboard() {
+/* ---------- Decides which screen to show ---------- */
+
+function App() {
+  const { status } = useSession();
+  const [demoMode, setDemoMode] = useState(false);
+
+  // A link ending with ?demo=1 opens the demo directly
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('demo') === '1') setDemoMode(true);
+  }, []);
+
+  const startDemo = () => {
+    setDemoMode(true);
+    window.history.replaceState(null, '', '/?demo=1');
+    window.scrollTo({ top: 0 });
+  };
+
+  const exitDemo = () => {
+    setDemoMode(false);
+    window.history.replaceState(null, '', '/');
+    window.scrollTo({ top: 0 });
+  };
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#FAFAFA] text-slate-400 font-medium tracking-wide">
+        Loading workspace...
+      </div>
+    );
+  }
+
+  if (status === 'authenticated') return <Dashboard isDemo={false} />;
+  if (demoMode) return <Dashboard isDemo onExitDemo={exitDemo} />;
+  return <Landing onTryDemo={startDemo} />;
+}
+
+/* ---------- Shared pieces ---------- */
+
+function Logo({ size = 'text-xl' }: { size?: string }) {
+  return (
+    <span className={size}>
+      <span className="font-extrabold tracking-tight">Insight</span>
+      <span className="font-light text-slate-500">Flow</span>
+    </span>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+    </svg>
+  );
+}
+
+/* ---------- Landing page (signed-out visitors) ---------- */
+
+function Landing({ onTryDemo }: { onTryDemo: () => void }) {
+  const steps = [
+    {
+      number: '01',
+      title: 'Upload your reviews',
+      text: 'Export reviews from any platform as a CSV file. InsightFlow finds the review column automatically.',
+    },
+    {
+      number: '02',
+      title: 'AI reads every review',
+      text: 'A large language model analyzes up to 50 reviews and measures how your customers really feel.',
+    },
+    {
+      number: '03',
+      title: 'Know what to fix first',
+      text: 'Get the most critical pain points and concrete recommended actions your team can act on today.',
+    },
+  ];
+
+  return (
+    <main className="min-h-screen bg-[#FAFAFA] text-slate-900 selection:bg-indigo-100 selection:text-indigo-900">
+      {/* Navigation */}
+      <nav className="bg-white/80 backdrop-blur border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <Logo />
+          <button
+            onClick={() => signIn('github')}
+            className="text-sm text-slate-600 hover:text-slate-900 transition-colors font-medium cursor-pointer"
+          >
+            Sign in
+          </button>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <section className="max-w-4xl mx-auto px-6 pt-20 pb-16 text-center">
+        <span className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-full">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+          AI-powered review analytics
+        </span>
+
+        <h1 className="mt-6 text-4xl md:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.05]">
+          Turn customer reviews
+          <br />
+          <span className="text-indigo-600">into decisions.</span>
+        </h1>
+
+        <p className="mt-6 text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed">
+          Upload a CSV of customer reviews. InsightFlow uses AI to measure sentiment,
+          surface the biggest pain points and recommend what to fix first, in seconds.
+        </p>
+
+        <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={onTryDemo}
+            className="w-full sm:w-auto bg-indigo-600 text-white px-8 py-4 rounded-2xl font-semibold hover:bg-indigo-700 transition-all shadow-sm hover:shadow-md cursor-pointer"
+          >
+            Try live demo →
+          </button>
+          <button
+            onClick={() => signIn('github')}
+            className="w-full sm:w-auto bg-white text-slate-900 px-8 py-4 rounded-2xl font-semibold border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <GitHubIcon />
+            Sign in with GitHub
+          </button>
+        </div>
+
+        <p className="mt-4 text-xs text-slate-400">No sign-up needed for the demo.</p>
+      </section>
+
+      {/* How it works */}
+      <section className="max-w-6xl mx-auto px-6 pb-20">
+        <h2 className="text-center text-xs font-semibold tracking-[0.25em] text-slate-400 uppercase mb-8">
+          How it works
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {steps.map((step) => (
+            <div
+              key={step.number}
+              className="bg-white p-8 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-slate-100"
+            >
+              <span className="text-sm font-bold text-indigo-600">{step.number}</span>
+              <h3 className="mt-3 text-lg font-semibold text-slate-900">{step.title}</h3>
+              <p className="mt-2 text-sm text-slate-500 leading-relaxed">{step.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+          <span>
+            Built by <span className="font-semibold text-slate-600">Bodie Codes</span>
+          </span>
+          <span>Next.js · TypeScript · PostgreSQL · Prisma · Groq LLM</span>
+        </div>
+      </footer>
+    </main>
+  );
+}
+
+/* ---------- Dashboard (signed-in users and demo visitors) ---------- */
+
+function Dashboard({ isDemo, onExitDemo }: { isDemo: boolean; onExitDemo?: () => void }) {
   const { data: session, status } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,6 +183,7 @@ function Dashboard() {
 
   // The server knows who is signed in, so we don't send any user id
   const fetchHistory = async () => {
+    if (isDemo) return;
     try {
       const res = await fetch('/api/history', { cache: 'no-store' });
       const data = await res.json();
@@ -32,8 +196,8 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    if (status === 'authenticated') fetchHistory();
-  }, [status]);
+    if (!isDemo && status === 'authenticated') fetchHistory();
+  }, [status, isDemo]);
 
   const processUpload = async (fileToUpload: File) => {
     setLoading(true);
@@ -106,52 +270,66 @@ function Dashboard() {
     }
   };
 
-  if (status === "loading") {
-    return <div className="min-h-screen flex items-center justify-center bg-[#FAFAFA] text-slate-400 font-medium tracking-wide">Loading workspace...</div>;
-  }
-
-  if (status === "unauthenticated") {
-    return (
-      <div className="min-h-screen bg-[#FAFAFA] flex flex-col items-center justify-center p-4">
-        <div className="bg-white p-10 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 max-w-md w-full text-center">
-          <h1 className="text-3xl text-slate-900 mb-2">
-            <span className="font-extrabold tracking-tight">Insight</span>
-            <span className="font-light text-slate-500">Flow</span>
-          </h1>
-          <p className="text-slate-500 mb-10 text-sm">AI-powered customer review analytics platform.</p>
-          <button
-            onClick={() => signIn('github')}
-            className="w-full bg-slate-900 text-white px-6 py-3.5 rounded-xl font-medium hover:bg-slate-800 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-3 cursor-pointer"
-          >
-            Sign in with GitHub
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <main className="min-h-screen bg-[#FAFAFA] font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-900 pb-20">
       {/* Top Navigation */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <h1 className="text-xl">
-            <span className="font-extrabold tracking-tight">Insight</span>
-            <span className="font-light text-slate-500">Flow</span>
+          <h1>
+            <Logo />
           </h1>
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
-              {session?.user?.name || session?.user?.email}
-            </span>
-            <button
-              onClick={() => signOut()}
-              className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-medium cursor-pointer"
-            >
-              Sign out
-            </button>
-          </div>
+
+          {isDemo ? (
+            <div className="flex items-center gap-3">
+              <span className="hidden sm:inline text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 px-3 py-1.5 rounded-full">
+                Demo mode
+              </span>
+              <button
+                onClick={onExitDemo}
+                className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-medium cursor-pointer"
+              >
+                Exit demo
+              </button>
+              <button
+                onClick={() => signIn('github')}
+                className="text-sm bg-slate-900 text-white px-4 py-2 rounded-xl font-medium hover:bg-slate-800 transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <GitHubIcon />
+                <span className="hidden sm:inline">Sign in</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
+                {session?.user?.name || session?.user?.email}
+              </span>
+              <button
+                onClick={() => signOut()}
+                className="text-sm text-slate-500 hover:text-slate-900 transition-colors font-medium cursor-pointer"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </nav>
+
+      {/* Demo banner */}
+      {isDemo && (
+        <div className="bg-indigo-50 border-b border-indigo-100">
+          <div className="max-w-6xl mx-auto px-6 py-3 text-sm text-indigo-900">
+            You're exploring a live demo. Run the sample data or upload your own CSV.
+            Demo results aren't kept in a history.{' '}
+            <button
+              onClick={() => signIn('github')}
+              className="font-semibold underline underline-offset-2 hover:text-indigo-700 cursor-pointer"
+            >
+              Sign in with GitHub
+            </button>{' '}
+            to save your analyses.
+          </div>
+        </div>
+      )}
 
       <div className="max-w-6xl mx-auto px-6 py-10 space-y-10">
 
@@ -286,8 +464,8 @@ function Dashboard() {
           </section>
         )}
 
-        {/* History Section */}
-        {history.length > 0 && (
+        {/* History Section (signed-in users only) */}
+        {!isDemo && history.length > 0 && (
           <section className="animate-in fade-in duration-700 space-y-6 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">Analysis History</h2>

@@ -8,7 +8,13 @@ export const dynamic = "force-dynamic";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_REVIEWS = 50; // reviews sent to the AI per analysis
-const MAX_ANALYSES_PER_HOUR = 10; // per user
+const MAX_ANALYSES_PER_HOUR = 10; // per signed-in user
+const MAX_DEMO_ANALYSES_PER_HOUR = 30; // shared by all demo visitors
+
+// Demo analyses are stored under this account.
+// The ".invalid" domain is reserved and can never exist,
+// so nobody can ever sign in as this user.
+const DEMO_EMAIL = "demo@insightflow.invalid";
 
 // OpenAI-compatible client routed to Groq servers
 const openai = new OpenAI({
@@ -33,26 +39,40 @@ function extractReview(row: CsvRow): string {
   return String(value ?? "").trim();
 }
 
+// Finds (or creates once) the shared demo account
+async function getDemoUserId(): Promise<string> {
+  const demoUser = await prisma.user.upsert({
+    where: { email: DEMO_EMAIL },
+    update: {},
+    create: { email: DEMO_EMAIL, name: "Demo" },
+  });
+  return demoUser.id;
+}
+
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ success: false, error: message }, { status });
 }
 
 export async function POST(req: Request) {
   try {
-    // 1. Who is the user? Read it from the secure session, never from the browser
-    const userId = await getCurrentUserId();
-    if (!userId) {
-      return errorResponse("Please sign in to run an analysis.", 401);
-    }
+    // 1. Who is the user? Signed-in user from the secure session,
+    //    otherwise the visitor is using the public demo.
+    const signedInUserId = await getCurrentUserId();
+    const isDemo = !signedInUserId;
+    const userId = signedInUserId ?? (await getDemoUserId());
 
     // 2. Rate limit: protects the AI quota from abuse
+    const limit = isDemo ? MAX_DEMO_ANALYSES_PER_HOUR : MAX_ANALYSES_PER_HOUR;
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const recentAnalyses = await prisma.analysis.count({
       where: { userId, createdAt: { gte: oneHourAgo } },
     });
-    if (recentAnalyses >= MAX_ANALYSES_PER_HOUR) {
+
+    if (recentAnalyses >= limit) {
       return errorResponse(
-        `You've reached the limit of ${MAX_ANALYSES_PER_HOUR} analyses per hour. Please try again later.`,
+        isDemo
+          ? "The live demo is very popular right now. Please try again later or sign in with GitHub."
+          : `You've reached the limit of ${MAX_ANALYSES_PER_HOUR} analyses per hour. Please try again later.`,
         429
       );
     }
@@ -129,7 +149,7 @@ export async function POST(req: Request) {
         ? aiResult.actionItems
         : ["Maintain current service quality"];
 
-    // 6. Save the result for the signed-in user
+    // 6. Save the result (signed-in user or the shared demo account)
     const savedAnalysis = await prisma.analysis.create({
       data: {
         userId,
@@ -143,7 +163,7 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ success: true, data: savedAnalysis });
+    return NextResponse.json({ success: true, data: savedAnalysis, demo: isDemo });
   } catch (error) {
     console.error("API /api/analyze error:", error);
     return errorResponse("Failed to process the analysis. Please try again.", 500);
